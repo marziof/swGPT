@@ -1,0 +1,7 @@
+# configs/tiny.yaml
+n_layer: 2
+n_head: 2
+d_model: 64
+context_len: 64
+batch_size: 16
+mlp_mult: 4
