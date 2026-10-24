@@ -10,7 +10,7 @@ def get_batch(path, B, T, rnd_generator, device):
     """
     Select a random batch of data in given binary file
     Args:
-    - path: path to binary file with train or test data
+    - path: path to binary file with train or validation data
     - B, T: number B of sequences in batch, length T of sequences
     - rnd_generator: used to select random starting indices of sequences
     """
@@ -28,3 +28,14 @@ def get_batch(path, B, T, rnd_generator, device):
 
     return x_batch, y_batch
 
+
+def get_val_batches(path, B, T, n_batches, device, seed=1234):
+    """
+    Fixed-seed helper for eval, builds whole list at once
+    """
+    g = torch.Generator().manual_seed(seed)
+    return [get_batch(path, B, T, g, device) for _ in range(n_batches)]
+
+
+def print_a():
+    print("a")
