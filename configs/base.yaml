@@ -1,0 +1,19 @@
+# configs/base.yaml  (Kaggle T4)
+n_layer: 6
+n_head: 6
+d_model: 384
+context_len: 256
+batch_size: 64
+mlp_mult: 4
+
+max_steps: 5000          # placeholder: set from tok_s in the smoke run
+warmup_steps: 200
+eval_interval: 250
+eval_batches: 20
+ckpt_interval: 1000
+lr: 1.0e-3
+weight_decay: 0.1
+optimizer: adamw
+amp: fp16
+wandb: true
+wandb_project: swgpt
