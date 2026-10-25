@@ -34,12 +34,19 @@ class Config:
     data_dir: str = "data"
     vocab_size: int | None = None      # filled from meta.json if left as None
 
+    amp: str = "none"                  # "none" or "fp16" (fp16 only takes effect on CUDA)
+    wandb: bool = False
+    wandb_project: str = "swgpt"
+
+
+
     def __post_init__(self):
         assert self.d_model % self.n_head == 0, "d_model must be divisible by n_head"
         assert (self.d_model // self.n_head) % 2 == 0, "head_dim must be even for RoPE"
         assert isinstance(self.lr, float), "lr must be a float; write 1.0e-3, not 1e-3, in YAML"
         assert self.optimizer in ("adamw", "sgd"), f"unknown optimizer {self.optimizer}"
         assert self.warmup_steps < self.max_steps, "warmup_steps must be < max_steps"
+        assert self.amp in ("none", "fp16"), f"unknown amp mode {self.amp}"
 
 
 def load_config(path, **overrides):
