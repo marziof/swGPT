@@ -1,6 +1,8 @@
 data/
-checkpoints/
+runs/
+model_checkpoints/
 wandb/
 *.bin
+*.pt
 __pycache__/
 .ipynb_checkpoints/

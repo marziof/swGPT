@@ -36,6 +36,3 @@ def get_val_batches(path, B, T, n_batches, device, seed=1234):
     g = torch.Generator().manual_seed(seed)
     return [get_batch(path, B, T, g, device) for _ in range(n_batches)]
 
-
-def print_a():
-    print("a")

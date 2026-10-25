@@ -1,7 +1,16 @@
-# configs/tiny.yaml
+# configs/tiny.yaml  (CPU debug run)
 n_layer: 2
 n_head: 2
 d_model: 64
 context_len: 64
 batch_size: 16
 mlp_mult: 4
+
+max_steps: 1000
+warmup_steps: 50
+eval_interval: 50
+eval_batches: 10
+ckpt_interval: 500
+lr: 1.0e-3
+weight_decay: 0.0
+optimizer: adamw
