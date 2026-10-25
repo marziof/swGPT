@@ -10,6 +10,7 @@ import argparse
 import json
 import yaml
 import time
+import uuid
 from dataclasses import asdict
 
 
@@ -36,7 +37,7 @@ def train(cfg, trace=True, save=True):
     if cfg.wandb:
         import wandb
         id_file = run_path / "wandb_id.txt"
-        run_id = id_file.read_text() if id_file.exists() else wandb.util.generate_id()
+        run_id = id_file.read_text() if id_file.exists() else uuid.uuid4().hex[:8] # wandb.util.generate_id()
         id_file.write_text(run_id)
         wandb.init(project=cfg.wandb_project, name=cfg.run_name, id=run_id, resume="allow",
                 config={**asdict(cfg), "git_commit": get_git_hash()})
