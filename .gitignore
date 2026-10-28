@@ -1,4 +1,5 @@
 data/
+data_sft/
 runs/
 model_checkpoints/
 wandb/

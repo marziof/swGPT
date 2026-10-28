@@ -6,14 +6,20 @@ from pathlib import Path
 
 import torch
 
-
-def get_device():
-    if torch.cuda.is_available():
+def get_device(pref="auto"):
+    if pref == "cuda":
+        assert torch.cuda.is_available(), "device=cuda requested but CUDA is not available"
+        return "cuda"
+    if pref == "mps":
+        assert torch.backends.mps.is_available(), "device=mps requested but MPS is not available"
+        return "mps"
+    if pref == "cpu":
+        return "cpu"
+    if torch.cuda.is_available():            # "auto"
         return "cuda"
     if torch.backends.mps.is_available():
         return "mps"
     return "cpu"
-
 
 
 def save_checkpoint(path, model, opt, sched, step, cfg, g, best_val=math.inf, scaler=None):
@@ -36,6 +42,11 @@ def load_checkpoint(path, model, opt, sched, g, device, scaler=None):
         scaler.load_state_dict(ckpt["scaler"])
     return ckpt["step"], ckpt["best_val"]
 
+
+def load_pretrained(path, model, device):
+    ckpt = torch.load(path, map_location=device)
+    model.load_state_dict(ckpt["model"])
+    return model
 
 
 def log(metrics, step, run_path=None, trace=True, use_wandb=False):
@@ -61,3 +72,5 @@ def get_git_hash():
 def amp_context(device, cfg):
     enabled = cfg.amp == "fp16" and device == "cuda"
     return torch.autocast(device_type="cuda" if device == "cuda" else "cpu", dtype=torch.float16, enabled=enabled)
+
+

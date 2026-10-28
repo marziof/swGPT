@@ -1,0 +1,16 @@
+init_from: runs/pretrain_v2/best.pt
+data_dir: data_sft
+device: cpu
+
+batch_size: 16
+max_steps: 600
+warmup_steps: 30
+eval_interval: 20
+eval_batches: 10
+ckpt_interval: 200
+
+lr: 1.0e-4
+weight_decay: 0.0
+optimizer: adamw
+amp: none
+wandb: false

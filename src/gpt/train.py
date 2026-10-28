@@ -2,7 +2,7 @@ import torch
 from gpt.model import GPT
 from gpt.optim import build_optimizer, build_scheduler
 from gpt.data import get_batch, get_val_batches
-from gpt.utils import get_device, save_checkpoint, load_checkpoint, log, amp_context, get_git_hash
+from gpt.utils import get_device, save_checkpoint, load_checkpoint, load_pretrained, log, amp_context, get_git_hash
 from gpt.config import load_config
 
 from pathlib import Path
@@ -13,9 +13,12 @@ import time
 import uuid
 from dataclasses import asdict
 
+import math
+
 
 def train(cfg, trace=True, save=True):
-    device = get_device()
+    device = get_device(cfg.device)
+    print(f"device: {device}")
     torch.manual_seed(cfg.seed)
     g = torch.Generator().manual_seed(cfg.seed)
     model = GPT(cfg=cfg).to(device)
@@ -42,12 +45,26 @@ def train(cfg, trace=True, save=True):
         wandb.init(project=cfg.wandb_project, name=cfg.run_name, id=run_id, resume="allow",
                 config={**asdict(cfg), "git_commit": get_git_hash()})
 
+    if not cfg.resume and not cfg.overwrite:
+        existing = [f for f in ("best.pt", "last.pt", "metrics.jsonl") if (run_path / f).exists()]
+        if existing:
+            raise SystemExit(f"{run_path} already contains {existing}. "
+                            f"Use a different run_name, or pass overwrite=true.")
+
+    if cfg.init_from and Path(cfg.init_from).resolve().parent == run_path.resolve():
+        raise SystemExit("this run would write into the folder of its own init_from checkpoint")
+
     if not cfg.resume:
         (run_path / "config.yaml").write_text(yaml.safe_dump(asdict(cfg)))
     start_step, best_val = 0, float("inf")
     if cfg.resume:
         start_step, best_val = load_checkpoint(cfg.resume, model, opt, sched, g, device, scaler)
         print(f"resumed from {cfg.resume} at step {start_step}")
+    elif cfg.init_from:
+        load_pretrained(cfg.init_from, model, device)     # weights only
+    if cfg.init_from and not cfg.resume:
+        base = evaluate(model, val_data, amp_ctx)
+        log({"baseline_val_loss": base}, 0, run_path, trace, cfg.wandb)
     if cfg.overfit:
         x, y = get_batch(train_path, cfg.batch_size, cfg.context_len, g, device)
     t_last, step_last = time.time(), start_step - 1
@@ -56,8 +73,9 @@ def train(cfg, trace=True, save=True):
         if not cfg.overfit:
             x, y = get_batch(train_path, cfg.batch_size, cfg.context_len, g, device)
         train_loss, grad_norm = train_step(model, opt, x, y, cfg.grad_clip, amp_ctx, scaler)
+        if not math.isfinite(train_loss):
+            raise SystemExit(f"non-finite loss at step {step}; stopping, last good checkpoints are kept")
         sched.step()
-
         if step % cfg.eval_interval == 0 or step == cfg.max_steps - 1:
             tok_s = cfg.batch_size * cfg.context_len * (step - step_last) / (time.time() - t_last)
             val_loss = evaluate(model, val_data, amp_ctx)
@@ -91,11 +109,17 @@ def train_step(model, opt, x, y, grad_clip, amp_ctx, scaler=None):
         scaler.scale(loss).backward()
         scaler.unscale_(opt)                  # must unscale BEFORE clipping
         grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
+        if not torch.isfinite(grad_norm):
+            opt.zero_grad(set_to_none=True)
+            return loss.item(), float("nan")       # skip the update instead of applying garbage
         scaler.step(opt)                      # silently skips the step if grads have inf/nan
         scaler.update()
     else:
         loss.backward()
         grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
+        if not torch.isfinite(grad_norm):
+            opt.zero_grad(set_to_none=True)
+            return loss.item(), float("nan")       # skip the update instead of applying garbage
         opt.step()
     return loss.item(), grad_norm.item()
 
