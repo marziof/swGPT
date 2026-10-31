@@ -50,16 +50,29 @@ class Attention(nn.Module):
         self.qkv = nn.Linear(d_model, 3 * d_model, bias=False)
         self.W_o = nn.Linear(d_model, d_model, bias=False)
 
-    def forward(self, x):
+    def forward(self, x, start_pos=0, kv=None):
         # (B,T,d)
         B, T, d = x.shape
         q, k, v = self.qkv(x).split(d, dim=-1) # each (B,T,d)
         q = q.view(B, T, self.H, self.hd).transpose(1, 2)   # (B,H,T,hd)
         k = k.view(B, T, self.H, self.hd).transpose(1, 2)
         v = v.view(B, T, self.H, self.hd).transpose(1, 2)
-        q = self.rope(q)               # rotate q and k only
-        k = self.rope(k)   
-        y = F.scaled_dot_product_attention(q, k, v, is_causal=True)  # (B,H,T,hd)
+        q = self.rope(q, start_pos)               # rotate q and k only
+        k = self.rope(k, start_pos)   
+        if kv is None:  # training / plain path, unchanged                                          
+            assert start_pos == 0, "start_pos != 0 only makes sense with a cache"
+            y = F.scaled_dot_product_attention(q, k, v, is_causal=True)  # (B,H,T,hd)
+        else: 
+            assert T == 1 or start_pos == 0, "multi-token input with a non-empty cache needs an explicit mask"
+            k_buf, v_buf = kv                                   # each (B, H, max_len, hd)
+            end = start_pos + T
+            assert k_buf.shape[0] == B and end <= k_buf.shape[2], "cache batch size or length mismatch"
+            k_buf[:, :, start_pos:end] = k.to(k_buf.dtype)      # store the ROTATED keys, plus the values
+            v_buf[:, :, start_pos:end] = v.to(v_buf.dtype)
+            k_all = k_buf[:, :, :end].to(q.dtype)               # every position seen so far, (B, H, end, hd)
+            v_all = v_buf[:, :, :end].to(q.dtype)
+            y = F.scaled_dot_product_attention(q, k_all, v_all, is_causal=(T > 1))
+            
         y = y.transpose(1, 2).contiguous().view(B, T, d)    # (B,T,d)
         return self.W_o(y) # (B,T,d)
 
@@ -82,8 +95,8 @@ class Block(nn.Module):
         self.norm1 = RMSNorm(cfg.d_model)
         self.norm2 = RMSNorm(cfg.d_model)
 
-    def forward(self, x):
-        h = x + self.mha(self.norm1(x))
+    def forward(self, x, start_pos=0, kv=None):
+        h = x + self.mha(self.norm1(x), start_pos=start_pos, kv=kv)
         y = h + self.mlp(self.norm2(h))
         return y
 
@@ -92,6 +105,7 @@ class Block(nn.Module):
 class GPT(nn.Module):
     def __init__(self, cfg): #B, T, d, H, V
         super().__init__()
+        self.cfg = cfg
         self.tok_emb = nn.Embedding(cfg.vocab_size, cfg.d_model) # embed input form (B,T) -> (B, T, d)
         self.blocks = nn.ModuleList([Block(cfg) for _ in range(cfg.n_layer)]) # transformer blocks to refine embeddings, keep (B, T, d)
         self.norm_f = RMSNorm(cfg.d_model)
@@ -107,13 +121,23 @@ class GPT(nn.Module):
         if isinstance(m, (nn.Linear, nn.Embedding)):
             nn.init.normal_(m.weight, mean=0.0, std=0.02)
 
-    def forward(self, idx, targets=None):
+    def make_cache(self, B, dtype=None):
+        ref = self.tok_emb.weight                      # defines the device and the default dtype
+        dtype = dtype or ref.dtype
+        cfg = self.cfg
+        shape = (B, cfg.n_head, cfg.context_len, cfg.d_model // cfg.n_head)   # [B, H, max_len, hd]
+        # cache is a list of (k_buf, v_buf) for each head, in each block layer
+        return [(torch.zeros(shape, device=ref.device, dtype=dtype),
+                torch.zeros(shape, device=ref.device, dtype=dtype))
+                for _ in range(cfg.n_layer)]
+
+    def forward(self, idx, targets=None, start_pos=0, cache=None):
         # idx: batch of token ids, (B, T)
         # embed X: (B, T, d_emb)
         x = self.tok_emb(idx)
         # pass through n transformer blocks -> 
-        for block in self.blocks:
-            x = block(x)
+        for i, block in enumerate(self.blocks):
+            x = block(x, start_pos=start_pos, kv=None if cache is None else cache[i])
         x = self.norm_f(x) # still (B, T, d_emb)
         logits = x @ self.tok_emb.weight.T # project back to logits over tokens for each initial token (predictinos) (B, T, V)
         loss = F.cross_entropy(logits.reshape(-1, logits.size(-1)), targets.reshape(-1)) if targets is not None else None
